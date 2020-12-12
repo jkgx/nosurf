@@ -38,7 +38,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/justinas/nosurf"
+	"github.com/jkgx/nosurf"
 	"html/template"
 	"net/http"
 )
