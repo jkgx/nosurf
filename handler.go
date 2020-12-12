@@ -55,6 +55,9 @@ type CSRFHandler struct {
 	// ...or a custom matcher function
 	exemptFunc func(r *http.Request) bool
 
+	// Slices of paths that completely ignore this middleware.
+	ignorePaths []string
+
 	// All of those will be matched against Request.URL.Path,
 	// So they should take the leading slash into account
 }
@@ -116,6 +119,7 @@ func (h CSRFHandler) getCookieName() string {
 func (h *CSRFHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	r = addNosurfContext(r)
 	defer ctxClear(r)
+
 	w.Header().Add("Vary", "Cookie")
 
 	var realToken []byte
@@ -134,12 +138,18 @@ func (h *CSRFHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// As a consequence, CSRF check will fail when comparing the tokens later on,
 	// so we don't have to fail it just yet.
 	if len(realToken) != tokenLength {
-		h.RegenerateToken(w, r)
+		if !h.IsIgnored(r) {
+			h.RegenerateToken(w, r)
+		}
 	} else {
 		ctxSetToken(r, realToken)
 	}
+	if h.IsIgnored(r) {
+		h.handleSuccess(w, r)
+		return
+	}
 
-	if sContains(safeMethods, r.Method) || h.IsExempt(r) {
+	if sContains(safeMethods, r.Method) || h.IsExempt(r) || h.IsIgnored(r) {
 		// short-circuit with a success for safe methods
 		h.handleSuccess(w, r)
 		return
@@ -195,6 +205,16 @@ func (h *CSRFHandler) handleFailure(w http.ResponseWriter, r *http.Request) {
 
 // Generates a new token, sets it on the given request and returns it
 func (h *CSRFHandler) RegenerateToken(w http.ResponseWriter, r *http.Request) string {
+	if ctxWasSent(r) {
+		// The CSRF Cookie was set already by an earlier call to `RegenerateToken`
+		// in the same request context. It therefore does not make sense to regenerate
+		// it again as it will lead to two or more `Set-Cookie` instructions which will in turn
+		// cause CSRF to fail depending on the resulting order of the `Set-Cookie` instructions.
+		//
+		// No warning is necessary as the only caller to `setTokenCookie` is `RegenerateToken`.
+		return Token(r)
+	}
+
 	token := generateToken()
 	h.setTokenCookie(w, r, token)
 
@@ -210,6 +230,7 @@ func (h *CSRFHandler) setTokenCookie(w http.ResponseWriter, r *http.Request, tok
 	cookie.Value = b64encode(token)
 
 	http.SetCookie(w, &cookie)
+	ctxSetSent(r)
 
 }
 

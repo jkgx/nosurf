@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestDefaultFailureHandler(t *testing.T) {
@@ -69,6 +70,70 @@ func TestExemptedPass(t *testing.T) {
 	if writer.Code != expected {
 		t.Errorf("An exempted URL didn't pass the CSRF check."+
 			"Expected HTTP status %d, got %d", expected, writer.Code)
+	}
+
+	writer.Flush()
+}
+
+func TestIgnoredPass(t *testing.T) {
+	handler := New(http.HandlerFunc(succHand))
+	handler.IgnorePath("/faq")
+
+	req, err := http.NewRequest("POST", "http://dummy.us/faq", strings.NewReader("a=b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	writer := httptest.NewRecorder()
+	handler.ServeHTTP(writer, req)
+
+	expected := 200
+
+	if writer.Code != expected {
+		t.Errorf("An exempted URL didn't pass the CSRF check."+
+			"Expected HTTP status %d, got %d", expected, writer.Code)
+	}
+
+	if len(writer.Header().Get("Set-Cookie")) > 0 {
+		t.Errorf("A cookie was set but that was not expected: %+v", writer.Header())
+	}
+
+	writer.Flush()
+}
+
+func TestIgnoredWithContextPass(t *testing.T) {
+	handler := New(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		token := Token(r)
+		if token == "" {
+			t.Errorf("Token is inaccessible in the success handler")
+		}
+	}))
+	handler.IgnorePath("/faq")
+
+	req, err := http.NewRequest("POST", "http://dummy.us/faq", strings.NewReader("a=b"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.AddCookie(&http.Cookie{
+		Name:    "csrf_token",
+		Value:   "O1HWCzGJYii2r+rd8F4Ag+WugXfRrObGkihSIbNhMhA=",
+		Path:    "/",
+		Domain:  "dummy.us",
+		Expires: time.Now().Add(time.Hour),
+	})
+
+	writer := httptest.NewRecorder()
+	handler.ServeHTTP(writer, req)
+
+	expected := 200
+
+	if writer.Code != expected {
+		t.Errorf("An exempted URL didn't pass the CSRF check."+
+			"Expected HTTP status %d, got %d", expected, writer.Code)
+	}
+
+	if len(writer.Header().Get("Set-Cookie")) > 0 {
+		t.Errorf("A cookie was set but that was not expected: %+v", writer.Header())
 	}
 
 	writer.Flush()
@@ -314,9 +379,7 @@ func TestCorrectTokenPasses(t *testing.T) {
 			}
 			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 			req.AddCookie(cookie)
-
 			resp, err = http.DefaultClient.Do(req)
-
 			if err != nil {
 				t.Fatal(err)
 			}
