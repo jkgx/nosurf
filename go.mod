@@ -1,3 +1,3 @@
-module github.com/justinas/nosurf
+module github.com/jkgx/nosurf
 
-go 1.12
+go 1.15
